@@ -1,3 +1,4 @@
+
 /*
  * Irrigation system based on Atmega328P (Arduino Uno, Arduino Nano).
  *
@@ -10,8 +11,6 @@
  */
 
 
-#define DEBUG  // uncomment this for debugging
-
 #include <avr/cpufunc.h>
 #include <avr/interrupt.h>
 #include <avr/io.h>
@@ -21,18 +20,38 @@
 #include <stdbool.h>
 #include <stdint.h>
 
+#define DEBUG  // uncomment this for debugging
 
 /*
- * global helpers
+ * global helpers, shorthands
  */
 #define set_bit(reg, bit_num) ((reg) |= (1 << (bit_num)))
 #define clear_bit(reg, bit_num) ((reg) &= ~(1 << (bit_num)))
-
-
+#define enable_wd_interrupt() (WDTCSR |= (1 << WDIE))
 #ifdef DEBUG
     // toggle led on the board
-    #define blink() PINB |= (1 << PINB5)
+    #define blink() (PINB |= (1 << PINB5))
 #endif
+
+/*
+ * pin assignment
+ *  and mapping
+ */
+
+#define PIN_TANK_POWER    //2
+#define PIN_TANK_SENSOR   3
+#define PIN_PLANT_POWER   4
+#define PIN_PLANT_SENSOR  5
+#define PIN_MOTOR_CONTROL   8
+
+#define set_pin__tank_power
+#define pin_tank_power_get
+#define pin_tank_power_clear
+
+/* ...
+
+TODO: make a mapping to pins!
+*/
 
 
 /*
