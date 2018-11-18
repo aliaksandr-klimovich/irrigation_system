@@ -38,14 +38,46 @@
  */
 
 // Set debug mode. Comment this after debug.
-#define DEBUG
+//#define DEBUG
 
-/* IDE assignment */
-#define IDE_TANK_POWER      2
-#define IDE_TANK_SENSOR     3
-#define IDE_PLANT_POWER     4
-#define IDE_PLANT_SENSOR    5
-#define IDE_MOTOR_CONTROL   8
+/*
+ * PIN, PORT, DDR mapping.
+ *   Link it with <avr/io.h> library.
+ */
+#define TANK_POWER_PIN_ADDR         PIND
+#define TANK_POWER_PIN_NUM          PIND2
+#define TANK_POWER_PORT_ADDR        PORTD
+#define TANK_POWER_PORT_NUM         PORTD2
+#define TANK_POWER_DDR_ADDR         DDRD
+#define TANK_POWER_DDR_NUM          DDD2
+
+#define TANK_SENSOR_PIN_ADDR        PIND
+#define TANK_SENSOR_PIN_NUM         PIND3
+#define TANK_SENSOR_PORT_ADDR       PORTD
+#define TANK_SENSOR_PORT_NUM        PORTD3
+#define TANK_SENSOR_DDR_ADDR        DDRD
+#define TANK_SENSOR_DDR_NUM         DDD3
+
+#define PLANT_POWER_PIN_ADDR        PIND
+#define PLANT_POWER_PIN_NUM         PIND4
+#define PLANT_POWER_PORT_ADDR       PORTD
+#define PLANT_POWER_PORT_NUM        PORTD4
+#define PLANT_POWER_DDR_ADDR        DDRD
+#define PLANT_POWER_DDR_NUM         DDD4
+
+#define PLANT_SENSOR_PIN_ADDR        PIND
+#define PLANT_SENSOR_PIN_NUM         PIND5
+#define PLANT_SENSOR_PORT_ADDR       PORTD
+#define PLANT_SENSOR_PORT_NUM        PORTD5
+#define PLANT_SENSOR_DDR_ADDR        DDRD
+#define PLANT_SENSOR_DDR_NUM         DDD5
+
+#define MOTOR_CONTROL_PIN_ADDR        PINB
+#define MOTOR_CONTROL_PIN_NUM         PINB0
+#define MOTOR_CONTROL_PORT_ADDR       PORTB
+#define MOTOR_CONTROL_PORT_NUM        PORTB0
+#define MOTOR_CONTROL_DDR_ADDR        DDRB
+#define MOTOR_CONTROL_DDR_NUM         DDB0
 
 
 /*
@@ -65,48 +97,17 @@
 // WD interrupt clears this bit (see ref. man.), so need to set it again.
 #define enable_wd_interrupt()  (WDTCSR |= (1 << WDIE))
 
-// Toggle built-in led on the board
+#define sleep(timeout)          \
+do {                            \
+    wdt_enable(timeout);        \
+    enable_wd_interrupt();      \
+    sleep_cpu();                \
+    wdt_disable();              \
+} while(0);
+
+// Toggle built-in led on the board. This is a debug function.
 #define toggle_led()  (PINB |= (1 << PINB5))
-
-
-/*
- * IDE - port pin
- *   mapping table
- */
-
-enum ide_port_mapping_t {
-    PIN_ADDR = 0,
-    PIN_NUM,
-    PORT_ADDR,
-    PORT_NUM,
-    DDR_ADDR,
-    DDR_NUM,
-    ide_port_mapping_length,
-};
-
-uint8_t port[][ide_port_mapping_length] = {
-  /* IDE        PIN_ADDR,   PIN_NUM,    PORT_ADDR,  PORT_NUM,   DDR_ADDR,   DDR_NUM
-     ----       --------    -------     ---------   --------    --------    -------    */
-  /*  0 */  {   &PIND,      PIND0,      &PORTD,     PORTD0,     &DDRD,      DDD0    },
-  /*  1 */  {   &PIND,      PIND1,      &PORTD,     PORTD1,     &DDRD,      DDD1    },
-  /*  2 */  {   &PIND,      PIND2,      &PORTD,     PORTD2,     &DDRD,      DDD2    },
-  /*  3 */  {   &PIND,      PIND3,      &PORTD,     PORTD3,     &DDRD,      DDD3    },
-  /*  4 */  {   &PIND,      PIND4,      &PORTD,     PORTD4,     &DDRD,      DDD4    },
-  /*  5 */  {   &PIND,      PIND5,      &PORTD,     PORTD5,     &DDRD,      DDD5    },
-  /*  6 */  {   &PIND,      PIND6,      &PORTD,     PORTD6,     &DDRD,      DDD6    },
-  /*  7 */  {   &PIND,      PIND7,      &PORTD,     PORTD7,     &DDRD,      DDD7    },
-  /*  8 */  {   &PINB,      PINB0,      &PORTB,     PORTB0,     &DDRB,      DDB0    },
-  /*  9 */  {   &PINB,      PINB1,      &PORTB,     PORTB1,     &DDRB,      DDB1    },
-  /* 10 */  {   &PINB,      PINB2,      &PORTB,     PORTB2,     &DDRB,      DDB2    },
-  /* 11 */  {   &PINB,      PINB3,      &PORTB,     PORTB3,     &DDRB,      DDB3    },
-  /* 12 */  {   &PINB,      PINB4,      &PORTB,     PORTB4,     &DDRB,      DDB4    },
-  /* 13 */  {   &PINB,      PINB5,      &PORTB,     PORTB5,     &DDRB,      DDB5    },
-  // TODO: map remain IDE - Port pins
-};
-
-#define set_ide(IDE)       set_bit( port[IDE][PORT_ADDR], port[IDE][PORT_NUM] )
-#define clear_ide(IDE)   clear_bit( port[IDE][PORT_ADDR], port[IDE][PORT_NUM] )
-#define check_ide(IDE)  is_bit_set( port[IDE][PIN_ADDR ], port[IDE][PIN_NUM ] )
+#define blink()  do { toggle_led(); for(uint8_t i=0; i<255; i++); toggle_led(); } while(0);
 
 
 /*
@@ -114,21 +115,21 @@ uint8_t port[][ide_port_mapping_length] = {
  *
  */
 
-/*
- * Cycle counter.
- *   To count how many times WD interrupt fires.
- *   Another explanation: Count how many times ECU goes to sleep.
- *   Another explanation: How many times ECU wakes up after sleep.
- */
-uint16_t power_down_counter = 0;
+#ifdef DEBUG
+const uint8_t irrigation_cycles = 2;  // 2 * 0.5 = 1 [s]
+const uint8_t wait_water_in_saucer_cycles = 1;  // 1 * 1 = 1 [s]
+const uint8_t total_irrigation_cycles = 2;  // (1 + 1) * 2 - 1 = 3 [s]
+const uint16_t power_down_wait_time = 2 / 1;  // 8[s]
+#else
+const uint8_t irrigation_cycles = 8;  // 8 * 0.5 = 4 [s]
+const uint8_t wait_water_in_saucer_cycles = 2;  // 2 * 8 = 16 [s]
+const uint8_t total_irrigation_cycles = 5;  // (4 + 16) * 5 = 100 [s]
+const uint16_t power_down_wait_time = 60 * 60 / 8;  // 1[h]
+#endif
 
-//#ifdef DEBUG
-//    const uint16_t power_down_idle_length = 1;
-//#else
-//    // 60[seconds in minute] * 60[minutes in hour]
-//    // 8s is the WDT timeout (from prescaler)
-//    const uint16_t power_down_idle_length = (60 * 60) / 8;
-//#endif
+uint8_t irrigation_counter;
+uint8_t wait_water_in_saucer_counter;
+uint8_t total_irrigation_cycles_counter;
 
 /*
  * Bottle with a water (tank).
@@ -152,38 +153,46 @@ bool water_in_saucer = true;
  */
 bool motor_enabled = true;
 
-#define MODE_WAIT       0
-#define MODE_RUN        1
-#define MODE_ALERT      2
-uint8_t mode = MODE_RUN;
+enum mode_t {
+    MODE_CHECK,
+    MODE_IRRIGATE,
+    MODE_WAIT,
+    MODE_ALERT,
+    MODE_DEBUG,
+};
+uint8_t mode = MODE_CHECK;
 
-static inline void check_tank(void) {
-    set_ide(IDE_TANK_POWER);
-    _NOP();
-    enough_water_in_tank = check_ide(IDE_TANK_SENSOR);
-    clear_ide(IDE_TANK_POWER);
-}
+#define check_tank()                                                                \
+do {                                                                                \
+    set_bit(TANK_POWER_PORT_ADDR, TANK_POWER_PORT_NUM);                             \
+    _NOP();                                                                         \
+    enough_water_in_tank = is_bit_set(TANK_SENSOR_PIN_ADDR, TANK_SENSOR_PIN_NUM);   \
+    clear_bit(TANK_POWER_PORT_ADDR, TANK_POWER_PORT_NUM);                           \
+} while(0);
 
-static inline void check_saucer(void) {
-    set_ide(IDE_PLANT_POWER);
-    _NOP();
-    water_in_saucer = check_ide(IDE_PLANT_SENSOR);
-    clear_ide(IDE_PLANT_POWER);
-}
+#define check_saucer()                                                              \
+do {                                                                                \
+    set_bit(PLANT_POWER_PORT_ADDR, PLANT_POWER_PORT_NUM);                           \
+    _NOP();                                                                         \
+    water_in_saucer = is_bit_set(PLANT_SENSOR_PIN_ADDR, PLANT_SENSOR_PIN_NUM);     \
+    clear_bit(PLANT_POWER_PORT_ADDR, PLANT_POWER_PORT_NUM);                         \
+} while(0);
 
-static inline void enable_motor(void) {
-    if (!motor_enabled) {
-        set_ide(IDE_MOTOR_CONTROL);
-        motor_enabled = true;
-    }
-}
+#define enable_motor()                                                              \
+do {                                                                                \
+    if (!motor_enabled) {                                                           \
+        set_bit(MOTOR_CONTROL_PORT_ADDR, MOTOR_CONTROL_PORT_NUM);                   \
+        motor_enabled = true;                                                       \
+    }                                                                               \
+} while(0);
 
-static inline void disable_motor(void) {
-    if (motor_enabled) {
-        clear_ide(IDE_MOTOR_CONTROL);
-        motor_enabled = false;
-    }
-}
+#define disable_motor()                                                             \
+do {                                                                                \
+    if (motor_enabled) {                                                            \
+        clear_bit(MOTOR_CONTROL_PORT_ADDR, MOTOR_CONTROL_PORT_NUM);                 \
+        motor_enabled = false;                                                      \
+    }                                                                               \
+} while(0);
 
 
 /*
@@ -208,14 +217,6 @@ int main(void) {
     // Configure and enable sleep mode
     set_sleep_mode(SLEEP_MODE_PWR_DOWN);  // power down - the most efficient for power saving
     sleep_enable();  // enable possibility to sleep using configured mode
-
-    // Configure WD and its timer initial value
-#ifdef DEBUG
-    wdt_enable(WDTO_1S);
-#else
-    wdt_enable(WDTO_8S);
-#endif
-
 
     /*
      * Disable all that it is possible to disable.
@@ -248,36 +249,29 @@ int main(void) {
     clear_bit(PORTB, PORTB5);  // Switch off
 
     // Tank instant power
-    set_bit(port[IDE_TANK_POWER][DDR_ADDR], port[IDE_TANK_POWER][DDR_NUM]);  // output
-    clear_ide(IDE_TANK_POWER);  // low
+    set_bit(TANK_POWER_DDR_ADDR, TANK_POWER_DDR_NUM);  // output
+    clear_bit(TANK_POWER_PORT_ADDR, TANK_POWER_PORT_NUM);  // low
 
     // Tank sensor
-    clear_bit(port[IDE_TANK_SENSOR][DDR_ADDR],
-              port[IDE_TANK_SENSOR][DDR_NUM]);  // input
-
-    clear_ide(IDE_TANK_SENSOR);  // tri-state, pull down
+    clear_bit(TANK_SENSOR_DDR_ADDR, TANK_SENSOR_DDR_NUM);  // input
+    clear_bit(TANK_SENSOR_PORT_ADDR, TANK_SENSOR_PORT_NUM);  // tri-state, pull down
 
     // Plant instant power
-    set_bit(port[IDE_PLANT_POWER][DDR_ADDR], port[IDE_PLANT_POWER][DDR_NUM]);  // output
-    clear_ide(IDE_PLANT_POWER);  // low
+    set_bit(PLANT_POWER_DDR_ADDR, PLANT_POWER_DDR_NUM);  // output
+    clear_bit(PLANT_POWER_PORT_ADDR, PLANT_POWER_PORT_NUM);  // low
 
     // Plant sensor
-    clear_bit(port[IDE_PLANT_SENSOR][DDR_ADDR],
-              port[IDE_PLANT_SENSOR][DDR_NUM]);  // input
-
-    clear_ide(IDE_PLANT_SENSOR);  // tri-state, pull down
+    clear_bit(PLANT_SENSOR_DDR_ADDR, PLANT_SENSOR_DDR_NUM); // input
+    clear_bit(PLANT_SENSOR_PORT_ADDR, PLANT_SENSOR_PORT_NUM);  // tri-state, pull down
 
     // Relay control -> Motor control
-    set_bit(port[IDE_MOTOR_CONTROL][DDR_ADDR], port[IDE_MOTOR_CONTROL][DDR_NUM]);  // output
+    set_bit(MOTOR_CONTROL_DDR_ADDR, MOTOR_CONTROL_DDR_NUM);  // output
     disable_motor();
 
 
     // Configure system clock prescaler
     // (does not affect WD prescaler)
     clock_prescale_set(clock_div_256);
-
-    // Reset watchdog timer before main loop
-    wdt_reset();
 
     // Enable interrupts
     sei();
@@ -289,41 +283,117 @@ int main(void) {
 
         switch(mode) {
 
-            case MODE_RUN:
-
-                // TODO introduce the timeout for motor in enabled state
-                // (disable it once the timeout is reached)
+            case MODE_CHECK:
 
                 check_tank();
                 if (!enough_water_in_tank) {
                     mode = MODE_ALERT;
-                    enable_wd_interrupt();
                     break;
                 }
 
                 check_saucer();
                 if (water_in_saucer) {
                     mode = MODE_WAIT;
-                    enable_wd_interrupt();
                     break;
                 }
 
+                mode = MODE_IRRIGATE;
 
+                // no break, just execute next mode
+
+            case MODE_IRRIGATE:
+                /*
+                 * Check list:
+                 * - Irrigate mode should switch to another mode only after motor is disabled.
+                 * - Exit from this mode should correctly set global variables.
+                 */
+
+                enable_motor();
+
+                irrigation_counter = 0;
+                wait_water_in_saucer_counter = 0;
+                total_irrigation_cycles_counter = 0;
+
+                while(total_irrigation_cycles_counter < total_irrigation_cycles) {
+
+                    if (motor_enabled) {
+
+                        sleep(WDTO_500MS);
+                        ++irrigation_counter;
+
+                        check_tank();
+                        if (!enough_water_in_tank) {
+                            disable_motor();
+                            mode = MODE_ALERT;
+                            goto MODE_IRRIGATE_END;
+                        }
+
+                        check_saucer();
+                        if (water_in_saucer) {
+                            disable_motor();
+                            // mode = MODE_WAIT;
+                            break;
+                        }
+
+                        if (irrigation_counter == irrigation_cycles) {
+                            irrigation_counter = 0;
+                            ++total_irrigation_cycles_counter;
+                            disable_motor();
+                            continue;
+                        }
+
+                    } else {  /* motor is disabled */
+#ifdef DEBUG
+                        sleep(WDTO_1S);
+#else
+                        sleep(WDTO_8S);
+#endif
+                        ++wait_water_in_saucer_counter;
+
+                        if (wait_water_in_saucer_counter == wait_water_in_saucer_cycles) {
+                            enable_motor();
+                            wait_water_in_saucer_counter = 0;
+                            continue;
+                        }
+                    }
+                }
+
+                mode = MODE_WAIT;
+
+MODE_IRRIGATE_END:
                 break;
 
+                // no break, just execute next mode
+
             case MODE_WAIT:
-                ++power_down_counter;
-                enable_wd_interrupt();
+#ifdef DEBUG
+                sleep(WDTO_1S);
+#else
+                for (uint16_t power_down_wait_time_counter = 0;
+                     power_down_wait_time_counter < power_down_wait_time;
+                     power_down_wait_time_counter++) {
+
+                    sleep(WDTO_8S);
+                }
+#endif
+                mode = MODE_CHECK;
                 break;
 
             case MODE_ALERT:
+                sleep(WDTO_1S);
+                blink();
+                mode = MODE_CHECK;
+                break;
 
+            case MODE_DEBUG:
+
+                if (DDRD & (1 << DDD2)) {
+                    blink();
+                }
+
+                sleep(WDTO_500MS);
                 break;
         }
-
-        // Enter sleep mode. No command will be executed till reset or WD interrupt.
-        sleep_cpu();
-
     }
 }
 
