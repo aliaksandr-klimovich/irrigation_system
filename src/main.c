@@ -3,6 +3,15 @@
  * Irrigation system based on Atmega328P (Arduino Uno, Arduino Nano).
  *
  * This is a single-file program with detailed comments and explanations.
+ * The system does next steps:
+ *  - Checks the tank with water if there is anough water to irrigate the plant.
+ *  - Check the pot (plant) saucer if it contains water (if there is a water in the saucer, the plant is irrigated). 
+ *  - Tries to irrigate the plant using the motor (water pump) control. This is a multiple step procedure. 
+ *      The motor is enabled for some amount of time and then goes to disabled state to give a water 
+ *      to drain into the saucer; this cycle is repeated for defined number of times or till the water
+ *      is present in the saucer.
+ *  - Sleeps for very long time using a watchdog (WD) timeout and power down sleep mode.
+ *  - Alerts the user if there is not enough water in the tank.
  *
  * +-----+----------+--------------+--------------------------------------------------------------------+
  * | IDE | Port pin | Physical pin | Assignment description                                             |
@@ -11,7 +20,7 @@
  * | 3   | PD3      | 5            | Sensor for tank, should be pulled down with 10k resistor           |
  * | 4   | PD4      | 6            | Instant power for plant                                            |
  * | 5   | PD5      | 7            | Sensor for plant, should be pulled down with 10k resistor          |
- * | 8   | PB0      | 14           | Relay -> motor                                                     |
+ * | 8   | PB0      | 14           | Relay -> motor control pin                                         |
  * +-----+----------+--------------+--------------------------------------------------------------------+
  */
 
@@ -90,13 +99,14 @@
 // Clear bit in register
 #define clear_bit(reg, bit_num)   ( (reg) &= ~(1 << (bit_num)) )
 
-// Check if bit is set
+// Check if bit is set in register
 #define is_bit_set(reg, bit_num)  ( (reg) &   (1 << (bit_num)) )
 
 // Set WDIE bit in WDTCSR register to enable WD interrupt.
 // WD interrupt clears this bit (see ref. man.), so need to set it again.
 #define enable_wd_interrupt()  (WDTCSR |= (1 << WDIE))
 
+// All sleep operations will use WD interrupt for wake up and deep sleep mode for sleeping.
 #define sleep(timeout)          \
 do {                            \
     wdt_enable(timeout);        \
@@ -105,14 +115,13 @@ do {                            \
     wdt_disable();              \
 } while(0);
 
-// Toggle built-in led on the board. This is a debug function.
-#define toggle_led()  (PINB |= (1 << PINB5))
+// Toggle built-in LED on the board. This is a debug function.
+#define toggle_led()  (PINB |= (1 << PINB5))  // Hard code pin B5 as it is a build-in LED on the board.
 #define blink()  do { toggle_led(); for(uint8_t i=0; i<255; i++); toggle_led(); } while(0);
 
 
 /*
  * Global variables
- *
  */
 
 #ifdef DEBUG
@@ -124,7 +133,7 @@ const uint16_t power_down_wait_time = 2 / 1;  // 8[s]
 const uint8_t irrigation_cycles = 8;  // 8 * 0.5 = 4 [s]
 const uint8_t wait_water_in_saucer_cycles = 2;  // 2 * 8 = 16 [s]
 const uint8_t total_irrigation_cycles = 5;  // (4 + 16) * 5 = 100 [s]
-const uint16_t power_down_wait_time = 60 * 60 / 8;  // 1[h]
+const uint16_t power_down_wait_time = 4 * 60 * 60 / 8;  // 4[h]
 #endif
 
 uint8_t irrigation_counter;
@@ -139,7 +148,7 @@ bool enough_water_in_tank = false;
 
 /*
  * If any water in the saucer.
- * Set to worst case (`false`) to let the system change it.
+ * Set to worst case (`true`) to let the system change it.
  */
 bool water_in_saucer = true;
 
@@ -153,6 +162,10 @@ bool water_in_saucer = true;
  */
 bool motor_enabled = true;
 
+/*
+ * State machine.
+ *   Next modes are defined. This list can be extended with other modes if it is required.
+ */ 
 enum mode_t {
     MODE_CHECK,
     MODE_IRRIGATE,
@@ -160,8 +173,17 @@ enum mode_t {
     MODE_ALERT,
     MODE_DEBUG,
 };
-uint8_t mode = MODE_CHECK;
+// Set initial mode
+uint8_t mode = MODE_CHECK;  
 
+/*
+ * Functions to check the tank and saucer. 
+ *   The main idea here: 
+ *    - Set the power (output) pin to let the current to flow to input pin.
+ *    - Wait settling time.
+ *    - Check (read) the sensor (input) pin and save its stete.
+ *    - Remove the power.
+ */
 #define check_tank()                                                                \
 do {                                                                                \
     set_bit(TANK_POWER_PORT_ADDR, TANK_POWER_PORT_NUM);                             \
@@ -174,7 +196,7 @@ do {                                                                            
 do {                                                                                \
     set_bit(PLANT_POWER_PORT_ADDR, PLANT_POWER_PORT_NUM);                           \
     _NOP();                                                                         \
-    water_in_saucer = is_bit_set(PLANT_SENSOR_PIN_ADDR, PLANT_SENSOR_PIN_NUM);     \
+    water_in_saucer = is_bit_set(PLANT_SENSOR_PIN_ADDR, PLANT_SENSOR_PIN_NUM);      \
     clear_bit(PLANT_POWER_PORT_ADDR, PLANT_POWER_PORT_NUM);                         \
 } while(0);
 
@@ -201,7 +223,9 @@ do {                                                                            
 
 // Watchdog time-out interrupt
 ISR(WDT_vect) {
-  // do nothing
+    // Do nothing
+    // Do not set WDIE bit in WDTCSR register here to enable WD interrupt.
+    //   It is prohibited for safety reason. See ref. man. 
 }
 
 
@@ -302,11 +326,6 @@ int main(void) {
                 // no break, just execute next mode
 
             case MODE_IRRIGATE:
-                /*
-                 * Check list:
-                 * - Irrigate mode should switch to another mode only after motor is disabled.
-                 * - Exit from this mode should correctly set global variables.
-                 */
 
                 enable_motor();
 
@@ -380,13 +399,18 @@ MODE_IRRIGATE_END:
                 break;
 
             case MODE_ALERT:
+                // Should alert the user that is not enough water in tank.
+                // Currently it is a `blink` function from debug macros.
+                // Later on will be a beep using a buzzer. 
                 sleep(WDTO_1S);
                 blink();
                 mode = MODE_CHECK;
                 break;
 
             case MODE_DEBUG:
-
+                // Use it only for debug, 
+                //  or to assure that some bits are sent and so on...
+                
                 if (DDRD & (1 << DDD2)) {
                     blink();
                 }
@@ -396,15 +420,3 @@ MODE_IRRIGATE_END:
         }
     }
 }
-
-
-
-
-
-
-
-
-
-
-
-
