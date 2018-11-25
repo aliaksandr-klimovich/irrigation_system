@@ -4,14 +4,20 @@
  *
  * This is a single-file program with detailed comments and explanations.
  * The system does next steps:
- *  - Checks the tank with water if there is anough water to irrigate the plant.
+ *  - Checks the tank with water if there is enough water to irrigate the plant.
  *  - Check the pot (plant) saucer if it contains water (if there is a water in the saucer, the plant is irrigated). 
  *  - Tries to irrigate the plant using the motor (water pump) control. This is a multiple step procedure. 
  *      The motor is enabled for some amount of time and then goes to disabled state to give a water 
  *      to drain into the saucer; this cycle is repeated for defined number of times or till the water
- *      is present in the saucer.
+ *      is present in the saucer. At system first start the system tries to irrigate the plant till saucer
+ *      sensor is triggered; then stores count of irrigation tries and deeply sleeps; next awake it will
+ *      use stored value of tries and try to irrigate the plant this number of times; if it exceeds saved value,
+ *      system enters emergency mode and the only way to exit this mode is to reset the ECU via reset button.
  *  - Sleeps for very long time using a watchdog (WD) timeout and power down sleep mode.
  *  - Alerts the user if there is not enough water in the tank.
+ *
+ *
+ * Pin assignment and description:
  *
  * +-----+----------+--------------+--------------------------------------------------------------------+
  * | IDE | Port pin | Physical pin | Assignment description                                             |
@@ -74,19 +80,26 @@
 #define PLANT_POWER_DDR_ADDR        DDRD
 #define PLANT_POWER_DDR_NUM         DDD4
 
-#define PLANT_SENSOR_PIN_ADDR        PIND
-#define PLANT_SENSOR_PIN_NUM         PIND5
-#define PLANT_SENSOR_PORT_ADDR       PORTD
-#define PLANT_SENSOR_PORT_NUM        PORTD5
-#define PLANT_SENSOR_DDR_ADDR        DDRD
-#define PLANT_SENSOR_DDR_NUM         DDD5
+#define PLANT_SENSOR_PIN_ADDR       PIND
+#define PLANT_SENSOR_PIN_NUM        PIND5
+#define PLANT_SENSOR_PORT_ADDR      PORTD
+#define PLANT_SENSOR_PORT_NUM       PORTD5
+#define PLANT_SENSOR_DDR_ADDR       DDRD
+#define PLANT_SENSOR_DDR_NUM        DDD5
 
-#define MOTOR_CONTROL_PIN_ADDR        PINB
-#define MOTOR_CONTROL_PIN_NUM         PINB0
-#define MOTOR_CONTROL_PORT_ADDR       PORTB
-#define MOTOR_CONTROL_PORT_NUM        PORTB0
-#define MOTOR_CONTROL_DDR_ADDR        DDRB
-#define MOTOR_CONTROL_DDR_NUM         DDB0
+#define MOTOR_CONTROL_PIN_ADDR      PINB
+#define MOTOR_CONTROL_PIN_NUM       PINB0
+#define MOTOR_CONTROL_PORT_ADDR     PORTB
+#define MOTOR_CONTROL_PORT_NUM      PORTB0
+#define MOTOR_CONTROL_DDR_ADDR      DDRB
+#define MOTOR_CONTROL_DDR_NUM       DDB0
+
+#define BUILT_IN_LED_PIN_ADDR       PINB
+#define BUILT_IN_LED_PIN_NUM        PINB5
+#define BUILT_IN_LED_PORT_ADDR      PORTB
+#define BUILT_IN_LED_PORT_NUM       PORTB5
+#define BUILT_IN_LED_DDR_ADDR       DDRB
+#define BUILT_IN_LED_DDR_NUM        DDB5
 
 
 /*
@@ -103,7 +116,7 @@
 #define is_bit_set(reg, bit_num)  ( (reg) &   (1 << (bit_num)) )
 
 // Set WDIE bit in WDTCSR register to enable WD interrupt.
-// WD interrupt clears this bit (see ref. man.), so need to set it again.
+// WD interrupt clears this bit (see reference manual), so need to set it again.
 #define enable_wd_interrupt()  (WDTCSR |= (1 << WDIE))
 
 // All sleep operations will use WD interrupt for wake up and deep sleep mode for sleeping.
@@ -115,9 +128,14 @@ do {                            \
     wdt_disable();              \
 } while(0);
 
-// Toggle built-in LED on the board. This is a debug function.
-#define toggle_led()  (PINB |= (1 << PINB5))  // Hard code pin B5 as it is a build-in LED on the board.
-#define blink()  do { toggle_led(); for(uint8_t i=0; i<255; i++); toggle_led(); } while(0);
+// Toggle built-in LED on the board. These are debug functions.
+#define toggle_built_in_led()  set_bit(BUILT_IN_LED_PIN_ADDR, BUILT_IN_LED_PIN_NUM);
+#define blink()                         \
+do {                                    \
+    toggle_built_in_led();              \
+    for(uint16_t i=0; i<32000; i++);    \
+    toggle_built_in_led();              \
+} while(0);
 
 
 /*
@@ -125,20 +143,29 @@ do {                            \
  */
 
 #ifdef DEBUG
-const uint8_t irrigation_cycles = 2;  // 2 * 0.5 = 1 [s]
-const uint8_t wait_water_in_saucer_cycles = 1;  // 1 * 1 = 1 [s]
-const uint8_t total_irrigation_cycles = 2;  // (1 + 1) * 2 - 1 = 3 [s]
-const uint16_t power_down_wait_time = 2 / 1;  // 8[s]
+#define irrigation_cycles               4           // 4 * 0.25 = 1 [s]
+#define irrigation_delay                WDTO_250MS
+#define wait_water_in_saucer_cycles     1           // 1 * 1 = 1 [s]
+#define wait_water_in_saucer_delay      WDTO_1S
+#define power_down_wait_time            (3 / 1)     // 3[s]
+#define power_down_wait_delay           WDTO_1S
 #else
-const uint8_t irrigation_cycles = 8;  // 8 * 0.5 = 4 [s]
-const uint8_t wait_water_in_saucer_cycles = 2;  // 2 * 8 = 16 [s]
-const uint8_t total_irrigation_cycles = 5;  // (4 + 16) * 5 = 100 [s]
-const uint16_t power_down_wait_time = 4 * 60 * 60 / 8;  // 4[h]
+#define irrigation_cycles               16          // 16 * 0.25 = 4[s] - how long the motor is enabled
+#define irrigation_delay                WDTO_250MS  // delay between checks
+#define wait_water_in_saucer_cycles     2           // 2 * 8 = 16[s] - how long the motor is disabled
+#define wait_water_in_saucer_delay      WDTO_8S     // delay between checks
+#define power_down_wait_time            (4 * 60 * 60 / 8)  // 4[h]
+#define power_down_wait_delay           WDTO_8S
 #endif
 
 uint8_t irrigation_counter;
 uint8_t wait_water_in_saucer_counter;
-uint8_t total_irrigation_cycles_counter;
+uint8_t total_irrigation_counter;
+
+uint8_t total_irrigation_cycles = 0;  // Will be set during first irrigation cycle
+#define total_irrigation_cycles_max_delta   1   // If the counter exceeds total_irrigation_cycles + this value,
+                                                //  the system will be switched to emergency mode of operation.
+#define total_irrigation_cycles_min_delta   1   // Currently is not in real use.
 
 /*
  * Bottle with a water (tank).
@@ -170,18 +197,20 @@ enum mode_t {
     MODE_CHECK,
     MODE_IRRIGATE,
     MODE_WAIT,
-    MODE_ALERT,
+    MODE_ALERT__NOT_ENOUGH_WATER_IN_TANK,
+    MODE_EMERGENCY,
     MODE_DEBUG,
 };
 // Set initial mode
-uint8_t mode = MODE_CHECK;  
+int mode = MODE_CHECK;
+
 
 /*
  * Functions to check the tank and saucer. 
  *   The main idea here: 
  *    - Set the power (output) pin to let the current to flow to input pin.
  *    - Wait settling time.
- *    - Check (read) the sensor (input) pin and save its stete.
+ *    - Check (read) the sensor (input) pin and save its state.
  *    - Remove the power.
  */
 #define check_tank()                                                                \
@@ -221,11 +250,11 @@ do {                                                                            
  * Interrupt handlers
  */
 
-// Watchdog time-out interrupt
+// WD time-out interrupt
 ISR(WDT_vect) {
     // Do nothing
     // Do not set WDIE bit in WDTCSR register here to enable WD interrupt.
-    //   It is prohibited for safety reason. See ref. man. 
+    //   It is prohibited for safety reason. See reference manual.
 }
 
 
@@ -269,8 +298,8 @@ int main(void) {
      */
 
     // Built-in LED
-    set_bit(DDRB, DDB5);  // IDE 13 as output
-    clear_bit(PORTB, PORTB5);  // Switch off
+    set_bit(BUILT_IN_LED_DDR_ADDR, BUILT_IN_LED_DDR_NUM);  // IDE 13 as output
+    clear_bit(BUILT_IN_LED_PORT_ADDR, BUILT_IN_LED_PORT_NUM);  // switch off
 
     // Tank instant power
     set_bit(TANK_POWER_DDR_ADDR, TANK_POWER_DDR_NUM);  // output
@@ -278,7 +307,7 @@ int main(void) {
 
     // Tank sensor
     clear_bit(TANK_SENSOR_DDR_ADDR, TANK_SENSOR_DDR_NUM);  // input
-    clear_bit(TANK_SENSOR_PORT_ADDR, TANK_SENSOR_PORT_NUM);  // tri-state, pull down
+    clear_bit(TANK_SENSOR_PORT_ADDR, TANK_SENSOR_PORT_NUM);  // tri-state, but should be pull down with resistor
 
     // Plant instant power
     set_bit(PLANT_POWER_DDR_ADDR, PLANT_POWER_DDR_NUM);  // output
@@ -286,7 +315,7 @@ int main(void) {
 
     // Plant sensor
     clear_bit(PLANT_SENSOR_DDR_ADDR, PLANT_SENSOR_DDR_NUM); // input
-    clear_bit(PLANT_SENSOR_PORT_ADDR, PLANT_SENSOR_PORT_NUM);  // tri-state, pull down
+    clear_bit(PLANT_SENSOR_PORT_ADDR, PLANT_SENSOR_PORT_NUM);  // tri-state, but should be pull down with resistor
 
     // Relay control -> Motor control
     set_bit(MOTOR_CONTROL_DDR_ADDR, MOTOR_CONTROL_DDR_NUM);  // output
@@ -295,10 +324,13 @@ int main(void) {
 
     // Configure system clock prescaler
     // (does not affect WD prescaler)
-    clock_prescale_set(clock_div_256);
+//    clock_prescale_set(clock_div_256);
 
     // Enable interrupts
     sei();
+
+
+    sleep(WDTO_8S);  // Sleep 8[s] before first start
 
     /*
      * Runtime cycle
@@ -311,7 +343,7 @@ int main(void) {
 
                 check_tank();
                 if (!enough_water_in_tank) {
-                    mode = MODE_ALERT;
+                    mode = MODE_ALERT__NOT_ENOUGH_WATER_IN_TANK;
                     break;
                 }
 
@@ -323,97 +355,146 @@ int main(void) {
 
                 mode = MODE_IRRIGATE;
 
-                // no break, just execute next mode
+                // No break, just execute next mode
 
             case MODE_IRRIGATE:
 
-                enable_motor();
-
                 irrigation_counter = 0;
                 wait_water_in_saucer_counter = 0;
-                total_irrigation_cycles_counter = 0;
+                total_irrigation_counter = 0;
 
-                while(total_irrigation_cycles_counter < total_irrigation_cycles) {
+                enable_motor();
 
-                    if (motor_enabled) {
+                while(1) {
 
-                        sleep(WDTO_500MS);
+                    if (motor_enabled) {  /* motor is enabled */
+
+                        sleep(irrigation_delay);
                         ++irrigation_counter;
 
                         check_tank();
                         if (!enough_water_in_tank) {
                             disable_motor();
-                            mode = MODE_ALERT;
-                            goto MODE_IRRIGATE_END;
+                            mode = MODE_ALERT__NOT_ENOUGH_WATER_IN_TANK;
+                            break;
                         }
 
                         check_saucer();
                         if (water_in_saucer) {
                             disable_motor();
-                            // mode = MODE_WAIT;
+                            ++total_irrigation_counter;
+                            mode = MODE_WAIT;
                             break;
                         }
 
+                        // Check counter when the motor is enabled
                         if (irrigation_counter == irrigation_cycles) {
                             irrigation_counter = 0;
-                            ++total_irrigation_cycles_counter;
+                            ++total_irrigation_counter;
                             disable_motor();
-                            continue;
+
+                            if (total_irrigation_counter >= total_irrigation_cycles &&
+                                    total_irrigation_cycles != 0) {
+
+                                // At this point the counter reaches the maximum value.
+                                // Let the system add +1 to the final counter. Do nothing...
+
+                            }
+
+                            if (total_irrigation_counter == total_irrigation_cycles +
+                                    total_irrigation_cycles_max_delta && total_irrigation_cycles != 0) {
+
+                                // Emergency! Something goes wrong!
+                                // Maybe the sensor is outside the saucer.
+                                // Or the motor has low power (power bank is discharged) and can't pour the plant.
+                                mode = MODE_EMERGENCY;
+                                break;
+
+                            }
                         }
 
                     } else {  /* motor is disabled */
-#ifdef DEBUG
-                        sleep(WDTO_1S);
-#else
-                        sleep(WDTO_8S);
-#endif
+
+                        sleep(wait_water_in_saucer_delay);
                         ++wait_water_in_saucer_counter;
 
+                        // Check counter when the motor is disabled
                         if (wait_water_in_saucer_counter == wait_water_in_saucer_cycles) {
-                            enable_motor();
                             wait_water_in_saucer_counter = 0;
-                            continue;
+
+                            check_saucer();
+                            if (water_in_saucer) {
+                                disable_motor();
+                                mode = MODE_WAIT;
+                                break;
+                            }
+
+                            enable_motor();
+
                         }
                     }
                 }
 
-                mode = MODE_WAIT;
+                // Now the mode is set. Let's check it.
 
-MODE_IRRIGATE_END:
+                if (mode == MODE_WAIT) {
+                    // This is expected state, need to check counters once again.
+
+                    if (total_irrigation_cycles == 0) {
+
+                        // This is a first start of the system.
+                        // Save the total cycles counter. It will be used as a expected counter all the time.
+                        total_irrigation_cycles = total_irrigation_counter;
+
+                    } else {
+
+                        if (total_irrigation_counter <=
+                                total_irrigation_cycles - total_irrigation_cycles_min_delta) {
+
+                            // This happens when the water reaches the saucer very fast.
+                            // Do nothing...
+
+                        }
+                    }
+                }
+
                 break;
 
-                // no break, just execute next mode
-
             case MODE_WAIT:
-#ifdef DEBUG
-                sleep(WDTO_1S);
-#else
+
                 for (uint16_t power_down_wait_time_counter = 0;
                      power_down_wait_time_counter < power_down_wait_time;
                      power_down_wait_time_counter++) {
 
-                    sleep(WDTO_8S);
+                     sleep(power_down_wait_delay);
                 }
-#endif
+
                 mode = MODE_CHECK;
                 break;
 
-            case MODE_ALERT:
+            case MODE_ALERT__NOT_ENOUGH_WATER_IN_TANK:
                 // Should alert the user that is not enough water in tank.
                 // Currently it is a `blink` function from debug macros.
-                // Later on will be a beep using a buzzer. 
-                sleep(WDTO_1S);
+                // Later on will be a beep using a buzzer.
+                sleep(WDTO_8S);
                 blink();
                 mode = MODE_CHECK;
                 break;
 
+            case MODE_EMERGENCY:
+                // Do not change the `mode`. This causes an infinite loop to execute.
+                // Need to push the reset button on the board to let the system exit this loop.
+                sleep(WDTO_8S);
+                blink();
+                break;
+
             case MODE_DEBUG:
                 // Use it only for debug, 
-                //  or to assure that some bits are sent and so on...
+                //  or to assure that some bits are set or maybe not.. and so on...
                 
-                if (DDRD & (1 << DDD2)) {
-                    blink();
-                }
+                // Your pretty code goes here...
+                //  ...
+                blink();
 
                 sleep(WDTO_500MS);
                 break;
