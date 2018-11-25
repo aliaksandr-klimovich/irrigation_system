@@ -162,7 +162,7 @@ uint8_t irrigation_counter;
 uint8_t wait_water_in_saucer_counter;
 uint8_t total_irrigation_counter;
 
-uint8_t total_irrigation_cycles = 0;  // Will be set during first irrigation cycle
+uint8_t total_irrigation_cycles = 0;  // Will be set during first irrigation cycle.
 #define total_irrigation_cycles_max_delta   1   // If the counter exceeds total_irrigation_cycles + this value,
                                                 //  the system will be switched to emergency mode of operation.
 #define total_irrigation_cycles_min_delta   1   // Currently is not in real use.
@@ -343,12 +343,20 @@ int main(void) {
 
                 check_tank();
                 if (!enough_water_in_tank) {
+                    if (total_irrigation_cycles == 0) {
+                        // This is a first start of the system and the tank is empty...
+                        // TODO warn the user about it!
+                    }
                     mode = MODE_ALERT__NOT_ENOUGH_WATER_IN_TANK;
                     break;
                 }
 
                 check_saucer();
                 if (water_in_saucer) {
+                    if (total_irrigation_cycles == 0) {
+                        // This is a first start of the system and the plant is irrigated...
+                        // TODO warn the user about it!
+                    }
                     mode = MODE_WAIT;
                     break;
                 }
@@ -382,6 +390,9 @@ int main(void) {
                         check_saucer();
                         if (water_in_saucer) {
                             disable_motor();
+                            // If it is triggered at this point (when the motor is enabled),
+                            //   the counter should also be incremented. Think it as a `ceil` function
+                            //   from `math` library. Example: ceil(1.2 times) -> 2 times.
                             ++total_irrigation_counter;
                             mode = MODE_WAIT;
                             break;
