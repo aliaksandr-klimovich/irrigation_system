@@ -103,69 +103,48 @@
 
 
 /*
- * Global helpers, shorthands
- */
-
-// Set bit in register
-#define set_bit(reg, bit_num)     ( (reg) |=  (1 << (bit_num)) )
-
-// Clear bit in register
-#define clear_bit(reg, bit_num)   ( (reg) &= ~(1 << (bit_num)) )
-
-// Check if bit is set in register
-#define is_bit_set(reg, bit_num)  ( (reg) &   (1 << (bit_num)) )
-
-// Set WDIE bit in WDTCSR register to enable WD interrupt.
-// WD interrupt clears this bit (see reference manual), so need to set it again.
-#define enable_wd_interrupt()  (WDTCSR |= (1 << WDIE))
-
-// All sleep operations will use WD interrupt for wake up and deep sleep mode for sleeping.
-#define sleep(timeout)          \
-do {                            \
-    wdt_enable(timeout);        \
-    enable_wd_interrupt();      \
-    sleep_cpu();                \
-    wdt_disable();              \
-} while(0);
-
-// Toggle built-in LED on the board. These are debug functions.
-#define toggle_built_in_led()  set_bit(BUILT_IN_LED_PIN_ADDR, BUILT_IN_LED_PIN_NUM);
-#define blink()                         \
-do {                                    \
-    toggle_built_in_led();              \
-    for(uint16_t i=0; i<32000; i++);    \
-    toggle_built_in_led();              \
-} while(0);
-
-
-/*
  * Global variables
  */
 
 #ifdef DEBUG
-#define irrigation_cycles               4           // 4 * 0.25 = 1 [s]
-#define irrigation_delay                WDTO_250MS
-#define wait_water_in_saucer_cycles     1           // 1 * 1 = 1 [s]
-#define wait_water_in_saucer_delay      WDTO_1S
-#define power_down_wait_time            (3 / 1)     // 3[s]
-#define power_down_wait_delay           WDTO_1S
+
+#define irrigation_delay    WDTO_250MS
+uint8_t irrigation_cycles = 4;  // 1[s]
+uint8_t irrigation_counter;
+
+#define wait_water_in_saucer_delay    WDTO_1S
+uint8_t wait_water_in_saucer_cycles = 1;  // 1[s]
+uint8_t wait_water_in_saucer_counter;
+
+#define  power_down_wait_delay    WDTO_1S
+uint16_t power_down_wait_cycles = 3;  // 3[s]
+
+#define  wait_before_irrigate_delay    WDTO_8S
+uint16_t wait_before_irrigate = 1;  // 8[s]
+
 #else
-#define irrigation_cycles               16          // 16 * 0.25 = 4[s] - how long the motor is enabled
-#define irrigation_delay                WDTO_250MS  // delay between checks
-#define wait_water_in_saucer_cycles     2           // 2 * 8 = 16[s] - how long the motor is disabled
-#define wait_water_in_saucer_delay      WDTO_8S     // delay between checks
-#define power_down_wait_time            (4 * 60 * 60 / 8)  // 4[h]
-#define power_down_wait_delay           WDTO_8S
+
+#define irrigation_delay    WDTO_250MS
+uint8_t irrigation_cycles = 16;  // 16 * 0.25 = 4[s] - how long the motor is enabled
+uint8_t irrigation_counter;
+
+#define wait_water_in_saucer_delay    WDTO_8S
+uint8_t wait_water_in_saucer_cycles = 2;  // 2 * 8 = 16[s] - how long the motor is disabled
+uint8_t wait_water_in_saucer_counter;
+
+#define  power_down_wait_delay    WDTO_8S
+uint16_t power_down_wait_cycles = 450;  // (1 * 60 * 60 / 8) ~ 1[h]
+
+#define  wait_before_irrigate_delay    WDTO_8S
+uint16_t wait_before_irrigate_cycles = 10800;  // (24 * 60 * 60 / 8) ~ 24[h]
+
 #endif
 
-uint8_t irrigation_counter;
-uint8_t wait_water_in_saucer_counter;
-uint8_t total_irrigation_counter;
-
-uint8_t total_irrigation_cycles = 0;  // Will be set during first irrigation cycle.
-#define total_irrigation_cycles_max_delta   1   // If the counter exceeds total_irrigation_cycles + this value,
+uint8_t total_irrigation_cycles = 0;            // Will be set during first irrigation cycle.
+uint8_t total_irrigation_cycles_max_delta = 1;  // If the counter exceeds total_irrigation_cycles + this value,
                                                 //  the system will be switched to emergency mode of operation.
-#define total_irrigation_cycles_min_delta   1   // Currently is not in real use.
+uint8_t total_irrigation_cycles_min_delta = 1;  // Currently is not in real use.
+uint8_t total_irrigation_counter;
 
 /*
  * Bottle with a water (tank).
@@ -195,14 +174,53 @@ bool motor_enabled = true;
  */ 
 enum mode_t {
     MODE_CHECK,
+    MODE_CHECK_BEFORE_IRRIGATE,
     MODE_IRRIGATE,
     MODE_WAIT,
+    MODE_WAIT_BEFORE_IRRIGATE,
     MODE_ALERT__NOT_ENOUGH_WATER_IN_TANK,
     MODE_EMERGENCY,
     MODE_DEBUG,
 };
-// Set initial mode
+
+// set initial mode
 int mode = MODE_CHECK;
+
+
+/*
+ * Global helpers, shorthands
+ */
+
+// set bit in register
+#define set_bit(reg, bit_num)     ( (reg) |=  (1 << (bit_num)) )
+
+// clear bit in register
+#define clear_bit(reg, bit_num)   ( (reg) &= ~(1 << (bit_num)) )
+
+// check if bit is set in register
+#define is_bit_set(reg, bit_num)  ( (reg) &   (1 << (bit_num)) )
+
+// Set WDIE bit in WDTCSR register to enable WD interrupt.
+// WD interrupt clears this bit (see reference manual), so need to set it again.
+#define enable_wd_interrupt()  (WDTCSR |= (1 << WDIE))
+
+// All sleep operations will use WD interrupt for wake up and deep sleep mode for sleeping.
+#define sleep(timeout)          \
+do {                            \
+    wdt_enable(timeout);        \
+    enable_wd_interrupt();      \
+    sleep_cpu();                \
+    wdt_disable();              \
+} while(0);
+
+// Toggle built-in LED on the board. These are debug functions.
+#define toggle_built_in_led()  set_bit(BUILT_IN_LED_PIN_ADDR, BUILT_IN_LED_PIN_NUM);
+#define blink()                         \
+do {                                    \
+    toggle_built_in_led();              \
+    for(uint16_t i=0; i<32000; ++i);    \
+    toggle_built_in_led();              \
+} while(0);
 
 
 /*
@@ -252,7 +270,7 @@ do {                                                                            
 
 // WD time-out interrupt
 ISR(WDT_vect) {
-    // Do nothing
+    // Do nothing.
     // Do not set WDIE bit in WDTCSR register here to enable WD interrupt.
     //   It is prohibited for safety reason. See reference manual.
 }
@@ -267,7 +285,7 @@ int main(void) {
     // Disable all interrupts... Oh, paranoia... All interrupts are not configured at startup.
     cli();
 
-    // Configure and enable sleep mode
+    // configure and enable sleep mode
     set_sleep_mode(SLEEP_MODE_PWR_DOWN);  // power down - the most efficient for power saving
     sleep_enable();  // enable possibility to sleep using configured mode
 
@@ -297,27 +315,27 @@ int main(void) {
      * Configure pins
      */
 
-    // Built-in LED
+    // built-in LED
     set_bit(BUILT_IN_LED_DDR_ADDR, BUILT_IN_LED_DDR_NUM);  // IDE 13 as output
     clear_bit(BUILT_IN_LED_PORT_ADDR, BUILT_IN_LED_PORT_NUM);  // switch off
 
-    // Tank instant power
+    // tank instant power
     set_bit(TANK_POWER_DDR_ADDR, TANK_POWER_DDR_NUM);  // output
     clear_bit(TANK_POWER_PORT_ADDR, TANK_POWER_PORT_NUM);  // low
 
-    // Tank sensor
+    // tank sensor
     clear_bit(TANK_SENSOR_DDR_ADDR, TANK_SENSOR_DDR_NUM);  // input
     clear_bit(TANK_SENSOR_PORT_ADDR, TANK_SENSOR_PORT_NUM);  // tri-state, but should be pull down with resistor
 
-    // Plant instant power
+    // plant instant power
     set_bit(PLANT_POWER_DDR_ADDR, PLANT_POWER_DDR_NUM);  // output
     clear_bit(PLANT_POWER_PORT_ADDR, PLANT_POWER_PORT_NUM);  // low
 
-    // Plant sensor
+    // plant sensor
     clear_bit(PLANT_SENSOR_DDR_ADDR, PLANT_SENSOR_DDR_NUM); // input
     clear_bit(PLANT_SENSOR_PORT_ADDR, PLANT_SENSOR_PORT_NUM);  // tri-state, but should be pull down with resistor
 
-    // Relay control -> Motor control
+    // relay control -> motor control
     set_bit(MOTOR_CONTROL_DDR_ADDR, MOTOR_CONTROL_DDR_NUM);  // output
     disable_motor();
 
@@ -326,11 +344,11 @@ int main(void) {
     // (does not affect WD prescaler)
 //    clock_prescale_set(clock_div_256);
 
-    // Enable interrupts
+    // enable interrupts
     sei();
 
 
-    sleep(WDTO_8S);  // Sleep 8[s] before first start
+    sleep(WDTO_8S);  // sleep 8[s] before first start
 
     /*
      * Runtime cycle
@@ -340,6 +358,7 @@ int main(void) {
         switch(mode) {
 
             case MODE_CHECK:
+            case MODE_CHECK_BEFORE_IRRIGATE:
 
                 check_tank();
                 if (!enough_water_in_tank) {
@@ -361,9 +380,24 @@ int main(void) {
                     break;
                 }
 
-                mode = MODE_IRRIGATE;
+                // Checks done, let's irrigate.
+                if (mode == MODE_CHECK_BEFORE_IRRIGATE) {
+                    mode = MODE_IRRIGATE;
+                    break;
+                }
 
-                // No break, just execute next mode
+                // Or wait some time before irrigation process can start.
+                mode = MODE_WAIT_BEFORE_IRRIGATE;
+
+                // No break, just execute next mode.
+
+            case MODE_WAIT_BEFORE_IRRIGATE:
+                for (uint16_t i = 0; i < wait_before_irrigate_cycles; ++i) {
+                    sleep(wait_before_irrigate_delay);
+                }
+
+                mode = MODE_CHECK_BEFORE_IRRIGATE;
+                break;
 
             case MODE_IRRIGATE:
 
@@ -417,7 +451,8 @@ int main(void) {
 
                                 // Emergency! Something goes wrong!
                                 // Maybe the sensor is outside the saucer.
-                                // Or the motor has low power (power bank is discharged) and can't pour the plant.
+                                // Or the motor has low power (power bank is discharged)
+                                //   and can't pour water into the plant.
                                 mode = MODE_EMERGENCY;
                                 break;
 
@@ -471,11 +506,14 @@ int main(void) {
 
                 break;
 
+            /*
+             * This mode is triggered to wait between sensor checks.
+             */
             case MODE_WAIT:
 
                 for (uint16_t power_down_wait_time_counter = 0;
-                     power_down_wait_time_counter < power_down_wait_time;
-                     power_down_wait_time_counter++) {
+                              power_down_wait_time_counter < power_down_wait_cycles;
+                              power_down_wait_time_counter++) {
 
                      sleep(power_down_wait_delay);
                 }
