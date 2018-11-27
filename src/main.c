@@ -133,18 +133,22 @@ uint8_t wait_water_in_saucer_cycles = 2;  // 2 * 8 = 16[s] - how long the motor 
 uint8_t wait_water_in_saucer_counter;
 
 #define  power_down_wait_delay    WDTO_8S
-uint16_t power_down_wait_cycles = 450;  // (1 * 60 * 60 / 8) ~ 1[h]
+uint16_t power_down_wait_cycles = 15;  // (2 * 60 / 8) ~ 2[m]
 
 #define  wait_before_irrigate_delay    WDTO_8S
-uint16_t wait_before_irrigate_cycles = 10800;  // (24 * 60 * 60 / 8) ~ 24[h]
+uint16_t wait_before_irrigate_cycles = 15;  // (2 * 60 / 8) ~ 2[m]
 
 #endif
 
 uint8_t total_irrigation_cycles = 0;            // Will be set during first irrigation cycle.
-uint8_t total_irrigation_cycles_max_delta = 1;  // If the counter exceeds total_irrigation_cycles + this value,
+uint8_t total_irrigation_cycles_max_delta = 2;  // If the counter exceeds total_irrigation_cycles + this value,
                                                 //  the system will be switched to emergency mode of operation.
-uint8_t total_irrigation_cycles_min_delta = 1;  // Currently is not in real use.
+uint8_t total_irrigation_cycles_min_delta = 0;  // Currently is not in real use.
 uint8_t total_irrigation_counter;
+bool is_first_irrigation = true;
+
+#define  wait_before_first_start_delay    WDTO_8S
+uint8_t  wait_before_first_start_cycles = 15;  // (2 * 60 / 8) ~ 2[m]
 
 /*
  * Bottle with a water (tank).
@@ -348,7 +352,9 @@ int main(void) {
     sei();
 
 
-    sleep(WDTO_8S);  // sleep 8[s] before first start
+    for (uint8_t i=0; i<wait_before_first_start_cycles; ++i) {
+        sleep(wait_before_first_start_delay);
+    }
 
     /*
      * Runtime cycle
@@ -381,7 +387,7 @@ int main(void) {
                 }
 
                 // Checks done, let's irrigate.
-                if (mode == MODE_CHECK_BEFORE_IRRIGATE) {
+                if (mode == MODE_CHECK_BEFORE_IRRIGATE || total_irrigation_cycles == 0) {
                     mode = MODE_IRRIGATE;
                     break;
                 }
@@ -488,9 +494,15 @@ int main(void) {
 
                     if (total_irrigation_cycles == 0) {
 
-                        // This is a first start of the system.
-                        // Save the total cycles counter. It will be used as a expected counter all the time.
-                        total_irrigation_cycles = total_irrigation_counter;
+                        if (is_first_irrigation == false) {
+
+                            // This is a first start of the system.
+                            // Save the total cycles counter. It will be used as a expected counter all the time.
+                            total_irrigation_cycles = total_irrigation_counter;
+
+                        } else {  // on first irrigation do not change the global counter
+                            is_first_irrigation = false;
+                        }
 
                     } else {
 
